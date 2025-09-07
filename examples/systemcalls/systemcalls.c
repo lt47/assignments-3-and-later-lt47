@@ -1,4 +1,14 @@
 #include "systemcalls.h"
+#include <stdlib.h>
+#include <stdio.h>
+#include <string.h> 
+#include <stdarg.h>
+#include <stdbool.h>
+#include <unistd.h>
+#include <sys/wait.h>
+#include <fcntl.h>
+#include <errno.h>
+
 
 /**
  * @param cmd the command to execute with system()
@@ -16,8 +26,15 @@ bool do_system(const char *cmd)
  *   and return a boolean true if the system() call completed with success
  *   or false() if it returned a failure
 */
-
-    return true;
+    //char command[50];
+    
+    if(system(cmd) < 0){
+       return false;
+    }
+    else{
+       return true;
+    }
+    return false;
 }
 
 /**
@@ -48,7 +65,7 @@ bool do_exec(int count, ...)
     // this line is to avoid a compile warning before your implementation is complete
     // and may be removed
     command[count] = command[count];
-
+    va_end(args);
 /*
  * TODO:
  *   Execute a system command by calling fork, execv(),
@@ -58,10 +75,36 @@ bool do_exec(int count, ...)
  *   as second argument to the execv() command.
  *
 */
+   int rc = fork();
+   if(rc < 0){
+       return false;
+   } 
+   else if(rc ==0){
+       int status = execv(command[0], command);
+       // Next print only seen on failure.
+       printf("status = %d errno = %d\n", status, errno);
+       exit(EXIT_FAILURE);
+   }
+   else{
+       int child_pid = rc;
+       int child_exit;
+       int p = waitpid(child_pid, &child_exit, 0);
+       if(p == -1){
+           //wait failed
+           return false;
+       }
+       if(WIFEXITED(child_exit) && WEXITSTATUS(child_exit) == 0){
+           return true;
+       }
+       else{
+           return false;
+       } 
+   }
+   
 
-    va_end(args);
+    //va_end(args);
 
-    return true;
+    return false;
 }
 
 /**
@@ -94,6 +137,47 @@ bool do_exec_redirect(const char *outputfile, int count, ...)
 */
 
     va_end(args);
+    int rc = fork();
+    if(rc < 0){
+       return false;
+    }   
+    else if(rc ==0){
+       int fd = open(outputfile, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        if (fd < 0) {
+            printf("open failed");
+            exit(EXIT_FAILURE);
+        }
 
-    return true;
+        if (dup2(fd, STDOUT_FILENO) < 0) {
+            printf("dup2 failed");
+            close(fd);
+            exit(EXIT_FAILURE);
+        }
+
+        close(fd);
+
+        execv(command[0], command);
+
+        // If execv returns, it failed
+        exit(EXIT_FAILURE);
+    }   
+    else{
+       int child_pid = rc;
+       int child_exit; 
+       int p = waitpid(child_pid, &child_exit, 0); 
+       if(p == -1){
+           //wait failed
+           return false;
+       }
+       if(WIFEXITED(child_exit) && WEXITSTATUS(child_exit) == 0){ 
+           return true;
+       }
+       else{
+           return false;
+       }
+    }
+   
+
+
+    return false;
 }
