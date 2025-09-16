@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/sh
 FILEDIR=$1
 SEARCHSTR=$2
 if [ $# -ne 2 ];

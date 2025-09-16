@@ -124,8 +124,8 @@ FINDER_APP_FILES=(autorun-qemu.sh finder.sh finder-test.sh writer)
 for File in ${FINDER_APP_FILES[@]}; do
     cp ${FINDER_APP_DIR}/$File ${OUTDIR}/rootfs/home/
 done
-# finder-test.sh also depends on "conf" directory contents
-# being present at the both the root and home directories
+
+# Copy finder-test.sh dependencies 
 cp -a ${FINDER_APP_DIR}/../conf ${OUTDIR}/rootfs/
 pushd ${OUTDIR}/rootfs/home/
 ln -s ../conf .
