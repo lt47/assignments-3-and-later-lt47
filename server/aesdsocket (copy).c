@@ -72,7 +72,7 @@ int send_file(int client_fd) {
     return 0;
 }
 
-int main(int argc, char *argv[]) {
+int main(void) {
     openlog("aesdsocket", LOG_PID, LOG_USER);
 
     struct sigaction sa;
@@ -116,26 +116,6 @@ int main(int argc, char *argv[]) {
         close(listen_fd);
         return -1;
     }
-    
-    
-    for (int i = 1; i < argc; i++) {
-    	//Daemonize
-    	if (strcmp(argv[i], "-d") == 0) {
-		memset(&sa, 0, sizeof (sa));
-		sa.sa_handler = SIG_IGN;
-		if (sigaction(SIGHUP, &sa, NULL) < 0){
-			syslog(LOG_INFO, "Caught signal, exiting.");
-			exit(-1);
-		}
-		//Forking process
-		if (daemon(0, 0) < 0){
-			syslog(LOG_INFO, "Unable to fork, exiting.");
-			exit(-1);
-		}
-	}
-    }
-    
-
 
     while (!exit_flag) {
         struct sockaddr_storage their_addr;
@@ -200,8 +180,8 @@ int main(int argc, char *argv[]) {
         }
 
         free(buffer);
-        //close(client_fd);
-        //syslog(LOG_INFO, "Closed connection from %s", ipstr);
+        close(client_fd);
+        syslog(LOG_INFO, "Closed connection from %s", ipstr);
     }
 
     if (listen_fd != -1) close(listen_fd);
