@@ -1,8 +1,9 @@
-CC      := $(CROSS_COMPILE)gcc
-CFLAGS  := -Wall -Wextra -g
-TARGET  := aesdsocket
-SRC     := aesdsocket.c
-OBJ     := $(SRC:.c=.o)
+CC      ?= $(CROSS_COMPILE)gcc
+CFLAGS  ?= -Wall -Wextra -g
+TARGET  ?= aesdsocket
+SRC     ?= aesdsocket.c
+OBJ     ?= $(SRC:.c=.o)
+LDFLAGS ?= -lpthread -lrt
 
 .PHONY: all clean
 
