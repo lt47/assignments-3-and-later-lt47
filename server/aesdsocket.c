@@ -18,7 +18,7 @@
 #include <unistd.h>
 #include <sys/queue.h>
 
-#include "aesd_ioctl.h" 
+#include "aesd_ioctl.h"
 
 #define PORT "9000"
 
@@ -38,7 +38,6 @@ static int server_fd = -1;
 static volatile sig_atomic_t stop = 0;
 pthread_mutex_t file_lock = PTHREAD_MUTEX_INITIALIZER;
 
-
 struct client_thread {
     pthread_t tid;
     int cfd;
@@ -47,10 +46,8 @@ struct client_thread {
 };
 SLIST_HEAD(thread_list, client_thread) head = SLIST_HEAD_INITIALIZER(head);
 
-
 #define LOGI(fmt, ...) syslog(LOG_INFO, fmt, ##__VA_ARGS__)
 #define LOGE(fmt, ...) syslog(LOG_ERR,  fmt, ##__VA_ARGS__)
-
 
 static void signal_handler(int sig)
 {
@@ -61,7 +58,6 @@ static void signal_handler(int sig)
     }
     syslog(LOG_INFO, "Caught signal %d, shutting down", sig);
 }
-
 
 static ssize_t write_all(int fd, const void *buf, size_t len)
 {
@@ -78,7 +74,6 @@ static ssize_t write_all(int fd, const void *buf, size_t len)
     return 0;
 }
 
-
 static int send_from_fd(int cfd, int datafd)
 {
     char buf[BUF_SIZE];
@@ -94,34 +89,60 @@ static int send_from_fd(int cfd, int datafd)
     return 0;
 }
 
-
 #if !USE_AESD_CHAR_DEVICE
-static void *timestamp_thread(void *arg)
+static int compute_seek_offset_from_file(int fd, unsigned cmd_index, unsigned cmd_offset, off_t *target_pos)
 {
-    (void)arg;
-    while (!stop) {
-        sleep(10);
-        if (stop) break;
+    off_t pos = 0;
+    unsigned cur_cmd = 0;
+    off_t cmd_start = 0;
+    off_t cmd_end = -1;
+    char buf[BUF_SIZE];
+    ssize_t n;
 
-        time_t now = time(NULL);
-        char tbuf[128];
-        struct tm tm_local;
-        localtime_r(&now, &tm_local);
-        strftime(tbuf, sizeof tbuf, "timestamp: %a, %d %b %Y %T %z\n", &tm_local);
+    if (cmd_index == 0) cmd_start = 0;
+    else cmd_start = -1;
 
-        pthread_mutex_lock(&file_lock);
-        int fd = open(DATAFILE, O_WRONLY | O_CREAT | O_APPEND, 0644);
-        if (fd >= 0) {
-            (void)write_all(fd, tbuf, strlen(tbuf));
-            fsync(fd);
-            close(fd);
+    if (lseek(fd, 0, SEEK_SET) < 0) return -1;
+
+    while ((n = read(fd, buf, sizeof(buf))) > 0) {
+        for (ssize_t i = 0; i < n; ++i) {
+            char ch = buf[i];
+            if (cur_cmd == cmd_index && cmd_start == -1) {
+            }
+            if (ch == '\n') {
+                if (cur_cmd == cmd_index) {
+                    cmd_end = pos + i + 1;
+                    goto found;
+                }
+                cur_cmd++;
+                if (cur_cmd == cmd_index) {
+                    cmd_start = pos + i + 1;
+                }
+            }
         }
-        pthread_mutex_unlock(&file_lock);
+        pos += n;
     }
-    return NULL;
+
+    if (cmd_start != -1 && cmd_end == -1) {
+        if (cur_cmd == cmd_index) {
+            cmd_end = pos;
+            goto found;
+        }
+    }
+
+    return -1;
+
+found:
+    if (cmd_start == -1) {
+        cmd_start = 0;
+    }
+    off_t entry_size = cmd_end - cmd_start;
+    if ((off_t)cmd_offset > entry_size) return -1;
+
+    *target_pos = cmd_start + (off_t)cmd_offset;
+    return 0;
 }
 #endif
-
 
 static int parse_seekto_line(const char *line, size_t len, struct aesd_seekto *seekto)
 {
@@ -144,7 +165,6 @@ static int parse_seekto_line(const char *line, size_t len, struct aesd_seekto *s
     }
     return -1;
 }
-
 
 static void *client_handler(void *arg)
 {
@@ -206,17 +226,46 @@ static void *client_handler(void *arg)
             pthread_mutex_unlock(&file_lock);
 #else
             pthread_mutex_lock(&file_lock);
-            int fd = open(DATAFILE, O_WRONLY | O_CREAT | O_APPEND, 0644);
-            if (fd >= 0) {
-                write_all(fd, acc + scan, line_len);
-                fsync(fd);
-                close(fd);
+
+            struct aesd_seekto seekto;
+            int parsed = parse_seekto_line(acc + scan, line_len, &seekto);
+            if (parsed == 1) {
+                int fd = open(DATAFILE, O_RDONLY);
+                if (fd < 0) {
+                    LOGE("open(%s): %s", DATAFILE, strerror(errno));
+                } else {
+                    off_t target = 0;
+                    if (compute_seek_offset_from_file(fd, seekto.write_cmd, seekto.write_cmd_offset, &target) == 0) {
+                        if (lseek(fd, target, SEEK_SET) < 0) {
+                            LOGE("lseek failed: %s", strerror(errno));
+                        } else {
+                            send_from_fd(cfd, fd);
+                        }
+                    } else {
+                        LOGE("Malformed AESDCHAR_IOCSEEKTO or invalid args");
+                    }
+                    close(fd);
+                }
+            } else if (parsed == 0) {
+                int fd = open(DATAFILE, O_WRONLY | O_CREAT | O_APPEND, 0644);
+                if (fd >= 0) {
+                    write_all(fd, acc + scan, line_len);
+                    fsync(fd);
+                    close(fd);
+                } else {
+                    LOGE("open(%s) for append failed: %s", DATAFILE, strerror(errno));
+                }
+                fd = open(DATAFILE, O_RDONLY);
+                if (fd >= 0) {
+                    send_from_fd(cfd, fd);
+                    close(fd);
+                } else {
+                    LOGE("open(%s) for read failed: %s", DATAFILE, strerror(errno));
+                }
+            } else {
+                LOGE("Malformed AESDCHAR_IOCSEEKTO");
             }
-            fd = open(DATAFILE, O_RDONLY);
-            if (fd >= 0) {
-                send_from_fd(cfd, fd);
-                close(fd);
-            }
+
             pthread_mutex_unlock(&file_lock);
 #endif
         next:
@@ -234,7 +283,6 @@ static void *client_handler(void *arg)
     node->done = true;
     return NULL;
 }
-
 
 static void daemonize(void)
 {
@@ -327,4 +375,4 @@ int main(int argc, char *argv[])
     LOGI("aesdsocket exiting");
     closelog();
     return 0;
-} 
+}
