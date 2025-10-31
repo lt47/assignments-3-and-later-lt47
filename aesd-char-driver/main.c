@@ -51,7 +51,10 @@ static void push_complete_command_locked(struct aesd_dev *dev, const char *data,
 
 static inline uint32_t circ_valid_count(const struct aesd_circular_buffer *circ)
 {
-    return circ->full ? AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED : circ->in_offs;
+    if (circ->full)
+        return AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED;
+
+    return (circ->in_offs == circ->out_offs) ? 0 : circ->in_offs;
 }
 
 static size_t circ_total_bytes(const struct aesd_circular_buffer *circ)
@@ -74,24 +77,26 @@ static int seekto_to_fpos(const struct aesd_circular_buffer *circ,
 {
     uint32_t valid = circ_valid_count(circ);
     loff_t pos = 0;
-    uint32_t i;
 
     if (valid == 0 || cmd_index >= valid)
         return -EINVAL;
 
-    for (i = 0; i < cmd_index; i++) {
+    for (uint32_t i = 0; i < valid; i++) {
         uint32_t idx = (circ->out_offs + i) % AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED;
+
+        if (i == cmd_index) {
+            if (cmd_offset >= circ->entry[idx].size)
+                return -EINVAL;
+            *newpos = pos + cmd_offset;
+            return 0;
+        }
+
         pos += circ->entry[idx].size;
     }
 
-    uint32_t target_idx = (circ->out_offs + cmd_index) % AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED;
-    if (cmd_offset > circ->entry[target_idx].size)
-        return -EINVAL;
-
-    pos += cmd_offset;
-    *newpos = pos;
-    return 0;
+    return -EINVAL;
 }
+
 
 
 int aesd_open(struct inode *inode, struct file *filp)
